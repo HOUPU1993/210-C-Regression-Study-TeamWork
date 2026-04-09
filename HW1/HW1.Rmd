@@ -1,0 +1,396 @@
+---
+title: "Regression and Other Stories — Exercises 1.3, 1.6, 2.9, 3.8, 3.9"
+author: "Houpu Li, Yuyang Wu, Nusrat Zahan Jarin"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 5
+)
+
+# ── Install packages if missing ──────────────────────────────────────────────
+pkgs <- c("ggplot2", "dplyr", "tidyr", "scales", "MASS")
+invisible(lapply(pkgs, function(p) {
+  if (!requireNamespace(p, quietly = TRUE)) install.packages(p)
+}))
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(scales)
+library(MASS)
+library(readxl)
+
+theme_set(theme_bw(base_size = 13))
+```
+
+---
+
+**AI-use Announcement**
+
+We used AI tools in **Exercises 1.3** and **Exercises 3.8** for initial code assistance. All outputs were carefully reviewed and fully understood before submission.
+
+# Exercise 1.3
+
+> **Goals of regression:** Download data on a topic of interest. Without graphing or performing any statistical analysis, discuss how you might use these data to:  
+> (a) Fit a regression to estimate a relationship of interest.  
+> (b) Use regression to adjust for differences between treatment and control groups.  
+> (c) Use regression to make predictions.
+
+
+**Background and Data**
+
+According to a discussion blog from [reddit](https://www.reddit.com/r/explainlikeimfive/comments/1fhf83/eli5_how_a_manual_transmission_car_gets_better/#:~:text=Weight%20%2D%20Manual%20transmissions%20are%2030%2D50%20lb,power%20is%20wasted%20to%20run%20those%20pumps), cars with manual transmissions (`am = 1`) are generally lighter, often by 30–50 lbs, which may influence fuel efficiency. Our research question is does transmission type (manual vs. automatic) affect fuel efficiency, and to what extent is this effect independent of other vehicle characteristics such as engine horsepower and weight?
+
+We use the built-in `mtcars` dataset (Motor Trend Car Road Tests, 1974).Variables of interest: 
+
+- `mpg` (miles per gallon)
+- `hp` (horsepower) 
+- `wt` (weight in 1000 lbs),
+- `am` (transmission: 0 = automatic, 1 = manual)
+
+```{r ex13-data}
+data(mtcars)
+head(mtcars[, c("mpg", "hp", "wt", "am")])
+```
+
+**Answer**
+
+## (a) Regression for the relationship of interest
+
+We regress fuel efficiency (`mpg`) on engine horsepower (`am: transmission: 0 = automatic, 1 = manual`) to understand whether this mechanical characteristic is associated with fuel consumption.
+
+```{r ex13-a}
+ggplot(mtcars, aes(x = factor(am, labels = c("Automatic", "Manual")),
+                   y = mpg, fill = factor(am))) +
+geom_boxplot(alpha = 0.6, width = 0.4) +
+geom_jitter(width = 0.1, size = 2, alpha = 0.7) +
+scale_fill_manual(values = c("#90CAF9", "#EF9A9A")) +
+labs(title = "1.3(a) — MPG by Transmission Type",
+     x = "Transmission Type",
+     y = "Miles per Gallon") +
+theme(legend.position = "none")
+```
+According to the regression result summary table below, we find the influence of `transmission type`  on `fuel efficiency` are significant, and we can conclude mannual transimission are associated with higher fuel efficiency(am).
+
+```{r ex13-a-plot}
+fit_a <- lm(mpg ~ am, data = mtcars)
+summary(fit_a)
+```
+
+## (b) Regression adjustment for group differences
+
+From (a), we found that manual transmission is associated with higher fuel efficiency. However, this estimate may be confounded by other variables — such as manual transmission cars tend to be lighter and have lower horsepower, both of which independently affect `mpg`. Then, we treat `am` as a binary treatment indicator (`am` = 1 for manual, `am` = 0 for automatic) and use regression to estimate the effect of transmission type after adjusting for `horsepower(hp)` and `car weight(wt)`.
+
+From (a), the naive estimate suggests manual transmission increases fuel efficiency by 7.245 mpg. However, after adjusting for `hp` and `wt`, the effect drops to 2.08 mpg. This suggests that much of the apparent advantage of manual transmission is actually driven by the fact that manual cars tend to be lighter and have lower horsepower — not by the transmission type itself.
+
+```{r ex13-b}
+fit_b <- lm(mpg ~ am + hp + wt, data = mtcars)
+summary(fit_b)
+
+# Compare naive vs adjusted estimate
+naive  <- coef(fit_a)["am"]
+adj    <- coef(fit_b)["am"]
+
+comparison <- data.frame(
+  Model    = c("Naive (unadjusted)", "Adjusted for hp & wt"),
+  Estimate = round(c(naive, adj), 2)
+)
+knitr::kable(comparison, caption = "Effect of manual transmission on MPG")
+```
+
+## (c) Regression for predictions
+Holding `hp` and `wt` constant, manual transmission is predicted to achieve approximately 2.1 mpg higher fuel efficiency than automatic — consistent with the adjusted estimate of 2.08 mpg from (b). For example, a car with `hp` = 100 and `wt` = 3.0 is predicted to achieve 21.6 mpg (automatic) vs. 23.7 mpg (manual).
+
+```{r ex13-c}
+new_cars <- data.frame(
+  am = c(0, 1, 0, 1),
+  hp = c(100, 100, 150, 150),
+  wt = c(3.0, 3.0, 3.5, 3.5)
+)
+
+preds <- predict(fit_b, newdata = new_cars, interval = "prediction", level = 0.95)
+result <- cbind(new_cars, round(preds, 1))
+names(result)[4:6] <- c("Predicted MPG", "Lower 95%", "Upper 95%")
+knitr::kable(result, caption = "Predicted MPG for hypothetical cars")
+```
+
+---
+
+# Exercise 1.6
+
+> **Causal Inference:** Find a real-world example with a treatment group, control group, a pre-treatment predictor, and a post-treatment outcome. Make a graph like Figure 1.8.
+
+
+**Answer**
+
+We use the LaLonde job training dataset as a real-world example to study whether participating in a job training program affects future earnings. In this dataset, the **treatment group** includes individuals who received job training, while the **control group** includes individuals who did not. A suitable **pre-treatment predictor** is earnings in 1975, and the **post-treatment outcome** is earnings in 1978.
+
+The dataset also contains demographic and background variables such as age, race, education, and previous earnings. These variables help describe the individuals before treatment.
+
+The data come from:
+
+Robert LaLonde, *“Evaluating the Econometric Evaluations of Training Programs,”*  
+*American Economic Review*, Vol. 76, pp. 604–620.
+
+We first loaded the data, then fit regression lines for the treatment and control groups, and finally made a graph similar to Figure 1.8. However, the graph is not as clear as the textbook figure. Many observations have zero earnings, so the points are heavily concentrated near the axes. As a result, the effect of the training program on earnings is not very easy to see from the graph alone. Even after trying a log transformation, the pattern is still not as clear as in Figure 1.8.
+
+```{r }
+lalonde <- read.csv("/Users/houpuli/Downloads/lalonde.csv")
+lalonde$Unnamed..0 <- NULL
+
+plot(lalonde$re74, lalonde$re78,
+     pch = ifelse(lalonde$treat == 1, 1, 16),
+     xlab = "Pre-treatment predictor (earnings in 1974)",
+     ylab = "Outcome measurement (earnings in 1978)",
+     main = "LaLonde job training data")
+
+# regression for controls
+abline(lm(re78 ~ re74, data = subset(lalonde, treat == 0)))
+
+# regression for treated
+abline(lm(re78 ~ re74, data = subset(lalonde, treat == 1)))
+
+legend("topleft",
+       legend = c("Control", "Treated"),
+       pch = c(16, 1))
+```
+
+```{R }
+plot(log(lalonde$re74 + 1), log(lalonde$re78 + 1),
+     pch = ifelse(lalonde$treat == 1, 1, 16),
+     xlab = "Log pre-treatment earnings in 1974",
+     ylab = "Log post-treatment earnings in 1978",
+     main = "LaLonde job training data")
+
+abline(lm(log(re78 + 1) ~ log(re74 + 1), data = subset(lalonde, treat == 0)))
+abline(lm(log(re78 + 1) ~ log(re74 + 1), data = subset(lalonde, treat == 1)))
+
+legend("topleft",
+       legend = c("Control", "Treated"),
+       pch = c(16, 1))
+
+```
+
+---
+
+# Exercise 2.9
+
+> **Graphing Parallel Time Series:** The mortality data in Section 2.4 are accessible from this site at the U.S. Centers for Disease Control and Prevention: wonder.cdc.gov. Download mortality data from this source but choose just one particular cause of death, and then make graphs similar to those in Section 2.4, breaking down trends in death rate by age, sex, and region of the country.
+
+**Background and Data**
+
+We downloaded the data containing the death rate from Malignant neoplasm from 2018-2024 from [wonder.cdc.gov](https://wonder.cdc.gov/). We chose the table layout by census region, year, 5 year age group, sex. We chose the disease type from ICD 10 113 cause list.
+
+**Answer**
+
+```{r Library_Datacleaning}
+df <- read_excel("/Users/houpuli/Downloads/Underlying Cause of Death, 2018-2024, Single Race.xlsx")
+
+df <- df %>%
+  rename(
+    region = `Census Region`,
+    sex    = Sex,
+    year   = Year,
+    age    = `Five-Year Age Groups`,
+    rate   = `Crude Rate`
+  ) %>%
+  filter(!is.na(rate), rate != "Unreliable") %>%
+  mutate(
+    rate = as.numeric(rate),
+    year = as.numeric(year)
+  )
+
+head(df)
+names(df)
+```
+
+## OverallDeathTrend
+```{r overallTrend}
+#OverallTrend
+df_total <- df %>%
+  group_by(year) %>%
+  summarise(rate = mean(rate, na.rm = TRUE))
+
+ggplot(df_total, aes(x = year, y = rate)) +
+  geom_line(size = 1.2) +
+  labs(title = "Overall Death Rate Trend",
+       x = "Year",
+       y = "Crude death rate") +
+  theme_minimal()
+```
+The overall death rate related to malignant neoplasms (C00-C97) shows a decreasing trend from 2018 to 2024, with a slight increase in 2021.
+
+## Overall Death Male vs Female
+```{r}
+#male vs female
+# sex and year (overall death male vs female)
+df_sex_overall <- df %>%
+  group_by(year, sex) %>%
+  summarise(rate = mean(rate, na.rm = TRUE), .groups = "drop")
+ggplot(df_sex_overall, aes(x = year, y = rate, linetype = sex)) +
+  geom_line(size = 1.2, color = "black") +
+  scale_linetype_manual(values = c("Female" = "solid", "Male" = "dashed")) +
+  labs(title = "Overall Death Rate by Sex",
+       x = "Year",
+       y = "Crude death rate",
+       linetype = "Sex") +
+  theme_minimal()
+```
+Death rates related to malignant neoplasm is higher in Male than female across all age groups 
+
+## AGE_wise
+```{r Age_Death}
+## Aggregate by age
+df_age_plot <- df %>%
+  group_by(year, age) %>%
+  summarise(rate = mean(rate, na.rm = TRUE), .groups = "drop")
+
+# Plot
+ggplot(df_age_plot, aes(x = year, y = rate, color = age)) +
+  geom_line() +
+  labs(title = "Death Rate Trends by Age Group",
+       x = "Year",
+       y = "Crude death rate",
+       color = "Age Group") +
+  theme_minimal()
+```
+## Selecting Fewer age group (25-69)
+```{r}
+#selecting fewer age groups
+df_age_plot2 <- df_age_plot %>%
+  filter(age %in% c("25-29 years", "35-39 years", "45-49 years", "55-59 years", "65-69 years"))
+
+ggplot(df_age_plot2, aes(x = year, y = rate, color = age)) +
+  geom_line(size = 1.2) +
+  labs(title = "Death Rate Trends by Age Group",
+       x = "Year",
+       y = "Crude death rate",
+       color = "Age Group") +
+  theme_minimal()
+```
+To avoid cluster, we chose fewer age groups (from 25-69 years), the plot shows that death rates related to malignant neoplasm increase substantially with age, with older groups (especially 65-69) showing much higher rates than younger groups.
+
+## 45-54 year old age groups, sex, region wise
+```{r}
+#removing allages
+df <- df %>%
+  filter(age != "All Ages")
+
+#focusingon 45-50 year olds age groups
+df_4554 <- df %>%
+  filter(age == "45-49 years" | age == "50-54 years")
+
+#sex,region
+df_plot <- df_4554 %>%
+  group_by(year, sex, region) %>%
+  summarise(rate = mean(rate, na.rm = TRUE), .groups = "drop")
+
+df_labels <- df_plot %>%
+  group_by(sex, region) %>%
+  filter(year == max(year))
+ggplot(df_plot, aes(x = year, y = rate, color = region)) +
+  geom_line(size = 1.2) +
+  facet_wrap(~ sex) +
+  labs(title = "Death Rates (Age 45–54) by Region and Sex",
+       x = "Year",
+       y = "Crude death rate",
+       color = "Region") +
+  theme_minimal()
+```
+Malignant neoplasm related death rates for ages 45-54 generally decline over time for both men and women, with males consistently showing higher rates than females. Across regions, the south and midwest tend to have higher death rates, while the north east and west reman comparatively lower. 
+
+---
+
+# Exercise 3.8
+
+> **Correlated Random Variables:** Suppose that the heights of husbands and wives have a correlation of 0.3, husbands’ heights have a distribution with mean 69.1 and standard deviation 2.9 inches, and wifes’ heights have mean 63.7 and standard deviation 2.7 inches. Let x and y be the heights of a married couple chosen at random. What are the mean and standard deviation of the average height, *(x + y)/2*? 
+
+**Answer**
+The mean of the average couple height is **66.4 inches**, which is simply the average of the two individual means: (69.1 + 63.7) / 2. For the standard deviation, since x and y are positively correlated (ρ = 0.3), we need to account for their covariance in the calculation. The resulting SD = **2.2582 inches** is smaller than both the husband's SD (2.9 inches) and the wife's SD (2.7 inches), because averaging two values reduces variability.
+
+```{r ex38-analytical}
+# Given parameters
+mu_x  <- 69.1;  sd_x <- 2.9   # Husbands
+mu_y  <- 63.7;  sd_y <- 2.7   # Wifes
+rho   <- 0.3                  # Correlation
+
+# Mean of (x + y) / 2
+mu_avg <- (mu_x + mu_y) / 2
+
+# Variance of (x + y) / 2
+# Var(aX + bY) = a²Var(X) + b²Var(Y) + 2ab·Cov(X,Y)
+# Here a = b = 1/2, Cov(X,Y) = rho * sd_x * sd_y
+cov_xy  <- rho * sd_x * sd_y
+var_avg <- (1/4) * sd_x^2 + (1/4) * sd_y^2 + 2 * (1/2) * (1/2) * cov_xy
+sd_avg  <- sqrt(var_avg)
+
+cat(sprintf("Mean of (x + y)/2 : %.4f inches\n", mu_avg))
+cat(sprintf("Variance of (x + y)/2 : %.4f\n",    var_avg))
+cat(sprintf("SD of (x + y)/2 : %.4f inches\n",   sd_avg))
+```
+
+---
+
+# Exercise 3.9
+
+> **Comparison of Distributions:** Find an example in the scientific literature of the effect of treatment on some continuous outcome, and make a graph similar to Figure 3.9 showing the estimated population shift in the potential outcomes under a constant treatment effect.
+
+We used the the LaLonde job training dataset again. The treatment is participation in the job training program, the control is non-participation, and the continuous outcome is real earnings in 1978 (re78). So we drew the control outcome distribution
+and the treated distribution. The shifted curve represents the treated potential outcomes under the assumption that treatment adds the same amount to everyone. (We also trimmed the trim the density lines to x >= 0)
+
+The treated curve is slightly shifted to the right, suggesting that the job training program increases earnings on average. However, this shift is not very pronounced, particularly at higher income levels (the tails), where the two curves overlap substantially.
+
+
+```{r}
+
+lalonde <- read.csv("/Users/houpuli/Downloads/lalonde.csv")
+y_control <- lalonde$re78[lalonde$treat == 0]
+y_treated <- lalonde$re78[lalonde$treat == 1]
+
+# estimated average treatment effect
+tau_hat <- mean(y_treated) - mean(y_control)
+tau_hat
+
+# density of observed control outcomes
+dens_control <- density(y_control, na.rm = TRUE)
+
+# shift the control distribution by the estimated treatment effect
+x_treated <- dens_control$x + tau_hat
+y_treated_density <- dens_control$y
+
+keep1 <- dens_control$x >= 0
+keep2 <- (dens_control$x + tau_hat) >= 0
+
+plot(dens_control$x[keep1], dens_control$y[keep1],
+     type = "l", lwd = 2,
+     xlab = "Real earnings in 1978",
+     ylab = "Density",
+     main = "Comparison of distributions under a constant treatment effect")
+
+lines((dens_control$x + tau_hat)[keep2], dens_control$y[keep2], lwd = 2)
+
+legend("topright",
+       legend = c("Controls", "Treated"),
+       lwd = 2,
+       bty = "n")
+```
+
+
+
+---
