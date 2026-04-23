@@ -1,0 +1,486 @@
+---
+title: "HW 2 — Exercises 6.8, 7.9, 8.7, 8.8, 9.2, 9.3, 9.4, 9.10"
+author: "Houpu Li, Yuyang Wu, Nusrat Zahan Jarin"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = "center", fig.width = 8, fig.height = 5)
+
+library(rstanarm) 
+library(ggplot2)
+library(dplyr)
+library(MASS)     
+
+theme_set(theme_bw(base_size = 13))
+```
+
+---
+
+**AI-use Announcement**
+
+> Question 6.8 used AI to check function tapply which help to do grouped summary 
+
+> Question 7.9 used AI to debug my installation issues that I was having to install shinystan and rstanarm, AI gave me idea to install html tools; also used internet for installing the packages "remote" to get the access of rosdata).
+
+> Question 8.8 used AI to understand set.seed for the random simulation, also refresh=0, for cleaner output as didnt care to see the progress + understand some of the interpretation with smaller sample size to produce difference between lm and stan_glm)
+
+> Question 9.3 used AI to learn how to calculate the standard deviation of the predicted expectation based on confidential interval.
+
+> Question 9.4 used AI to provide the necessary mathematical functions and guide us through the calculation process.
+
+> Question 9.10 used AI to generate code for the fit_bayes, as needed to know where to place priors, and generating code for functions and ngrid <-2:100 in 9.10c)
+
+# Exercise 6.8
+
+> Regression to the mean with fake data: Perform a fake-data simulation as in Section 6.5, but using the flight school example on page 89. Simulate data from 500 pilots, each of whom performs two maneuvers, with each maneuver scored continuously on a 0–10 scale, that each pilot has a true ability that is unchanged during the two tasks, and that the score for each test is equal to this true ability plus independent errors. Further suppose that when pilots score higher than 7 on the scale during the first maneuver, that they get praised, and that scores lower than 3 on the first maneuver result in negative reinforcement. Also suppose, though, that this feedback has no effect on performance on the second task.
+> a) Make a scatterplot with one dot for each pilot, showing score on the second maneuver vs.score on the first maneuver. Color the dots blue for the pilots who got praised, red for those who got negative reinforcement, and black for the other cases.
+> b) Compute the average change in scores for each group of pilots. If you did your simulation correctly, the pilots who were praised did worse, on average, and the pilots who got negative reinforcement improved, on average, for the second maneuver. Explain how this happened, given that your data were simulated under a model in which the positive and negative messages had no effects.
+
+The pilots who were praised did worse, on average, and the pilots who got negative reinforcement improved, on average, for the second maneuver. This is likely related to what we discussed in section 6, The paradox of regression to the mean. In this case two maneuvers are independent and based on true ability and the random error assigned to them. For group "Praised", they were likely to got an high error in maneuver 1, but for maneuver 2 they don't necessary keep getting a high error based on their true ability, which brought the average score lower than the first maneuver 1. Because the error follows normal distribution so actually there is low chance to get extreme values, on average, the extreme groups move back toward their underlying ability level on the second maneuver.
+
+```{r 6.8}
+n <- 500
+true_ability <- rnorm(n, 5, 1)
+error_1 <- rnorm(n, 0, 2)
+error_2 <- rnorm(n, 0, 1)
+score_1 <- pmin(pmax(true_ability + error_1, 0),10)
+score_2 <- pmin(pmax(true_ability + error_2, 0),10)
+group <- ifelse(score_1 > 7, "Praised",
+         ifelse(score_1 < 3, "Negative", "Neutral"))
+cols <- ifelse(group == "Praised", "blue",
+        ifelse(group == "Negative", "red", "black"))
+
+plot(score_1, score_2,
+     col = cols,
+     pch = 16,
+     xlab = "Score on first maneuver",
+     ylab = "Score on second maneuver")
+change <- score_2 - score_1
+group_means <- tapply(change, group, mean) 
+group_counts <- table(group)
+print(group_means)
+```
+
+---
+
+# Exercise 7.9
+
+> Interpretation of regressions: Redo the election forecasting example of Section 7.1, but switching x and y, that is, predicting economic growth given the subsequent election outcome. Discuss the problems with giving a causal interpretation to the coefficients in this regression, and consider what this implies about any causal interpretations of the original regression fit in the chapter.
+
+**Answer**
+```{r setup1, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(htmltools)
+library(shinystan)
+library(rstanarm)
+```
+
+
+```{r}
+
+remotes::install_github("avehtari/ROS-Examples", subdir = "rpackage")
+library(rosdata)
+data("hibbs")
+head(hibbs)
+```
+
+```{r}
+#7.9 (used book example to get ideas about the code (section 7.1))
+#Normal regression: Predicting vote from growth (just to see)
+M_normal <- stan_glm(vote ~ growth, data = hibbs)
+print(M_normal)
+plot(hibbs$growth,hibbs$vote,
+     xlab = "Economic growth",
+     ylab = "Vote share")
+abline(M_normal, col= "black", lwd = 2)
+```
+
+
+```{r}
+# Reversed regression: predict growth from vote (After I reversed the x and y)
+M_reverse <- stan_glm(growth ~ vote, data = hibbs)
+print(M_reverse)
+plot(hibbs$vote, hibbs$growth,
+     xlab = "Vote share",
+     ylab = "Economic growth")
+abline(M_reverse, col= "red", lwd = 2)
+```
+If we interpret this literally, it would say that a one point increase in incumbent vote share is associated with about a 0.2 percentage point increase in economic growth. The intercept implies that when vote share is zero, predicted growth would be -7.9% though it doesnt have any practical meaning. So, literal interpretation would casually imply that election outcome affect past economic growth, but I think it's impossible because the time order is reversed here. Even though the coefficient is positive, I think there are other underlying factors, rather than the vote share directly affecting the growth. This shows that regression coefficients can reflect mere correlation, and it implies that original regression should also not be automatically interpreted as causal. 
+
+---
+
+# Exercise 8.7
+
+> Least squares slope as a weighted average of individual slopes:
+
+> a) Prove that the weighted average slope defined in equation (8.8) is equivalent to the least
+**Answer for a)**
+
+Least squares naturally gives more influence to pairs with larger horizontal separation, which is why the weighted average works. For the formular comparison please see attached picture (8.7,png). 
+![Alt text](/Users/houpuli/Downloads/HW2/8.7.png)
+
+> b) Demonstrate how this works in a simple case with three data points, (x, y) = (0, 0), (4, 1), (5, 5).
+**Answer for b)**
+
+```{r 8.7, echo=FALSE}
+
+x <- c(0, 4, 5)
+y <- c(0, 1, 5)
+n <- length(x)
+x_bar <- mean(x)
+y_bar <- mean(y)
+b_ls <- sum((x - x_bar) * (y - y_bar)) / sum((x - x_bar)^2)
+print(paste("Least Square:", b_ls))
+
+num <- 0   
+den <- 0 
+for (i in 1:(n-1)) {
+  for (j in (i+1):n) {
+    slope_ij <- (y[j] - y[i]) / (x[j] - x[i])
+    weight_ij <- (x[j] - x[i])^2
+    num <- num + weight_ij *  slope_ij
+    den <- den + weight_ij
+  }
+}
+
+b_pairwise <- num / den
+print(paste("weighted average of slopes:", b_pairwise))
+```
+
+---
+
+# Exercise 8.8
+
+> Comparing lm and stan_glm: Use simulated data to compare least squares estimation to default Bayesian regression:
+
+> a) Simulate 100 data points from the model, y = 2 + 3x + error, with predictors x drawn from a uniform distribution from 0 to 20, and with independent errors drawn from the normal distribution with mean 0 and standard deviation 5. Fit the regression of y on x data using lm and stan_glm (using its default settings) and check that the two programs give nearly identical results.
+**Answer for a)**
+
+```{r 8.8 a}
+library(rstanarm)
+set.seed(123)
+#simulating data
+n <-100
+x <- runif (n,0,20)
+y <- 2+ 3*x + rnorm(n,0,5)
+dat<- data.frame(x=x, y=y)
+
+#fitting lm and stan_glm
+fit_lm <- lm (y~x, data=dat)
+fit_baye <-stan_glm (y~x, data= dat, refresh= 0)
+print(fit_lm)
+summary(fit_lm)
+print(fit_baye)
+```
+
+> b) Plot the simulated data and the two fitted regression lines.
+**Answer for b)**
+
+```{r 8.8 b}
+#b plotting the simulated data and two fitted regression line 
+plot(dat$x, dat$y,
+     xlab = "x",
+     ylab = "y",
+     main = "Simulated data with fitted lines")
+
+abline(fit_lm, col = "blue", lwd = 2)
+abline(fit_baye, col = "red", lwd = 2)
+
+legend("topleft",
+       legend = c("lm", "stan_glm"),
+       col = c("blue", "red"),
+       lwd = 2,
+       bty = "n")
+```
+I think I cannot see the line (lm), because stan_glm and lm are both identical. 
+
+> c) Repeat the two steps above, but try to create conditions for your simulation so that lm and stan_glm give much different results.
+**Answer for c)**
+
+```{r 8.8 c}
+
+set.seed(456)
+n2 <- 6
+x2 <- runif(n2, 0, 1)
+y2 <- 2 + 3*x2 + rnorm(n2, 0, 20)
+dat2 <- data.frame(x = x2, y = y2)
+
+fit_lm2  <- lm(y ~ x, data = dat2)
+fit_baye2 <- stan_glm(y ~ x, data = dat2, refresh = 0)
+
+summary(fit_lm2)
+print(fit_baye2)
+
+plot(dat2$x, dat2$y,
+     xlab = "x",
+     ylab = "y",
+     main = "Small noisy sample: lm vs stan_glm")
+
+abline(fit_lm2, col = "blue", lwd = 2)
+abline(coef(fit_baye2)[1], coef(fit_baye2)[2], col = "red", lwd = 2)
+
+legend("topleft",
+       legend = c("lm", "stan_glm"),
+       col = c("blue", "red"),
+       lwd = 2,
+       bty = "n")
+```
+Here at first, I used n=3 (which is extremely small, only 3 sample points) and the result differed a lot but I thought that is going to be too extreme, so I kept the n as 6 and increased the noise (SD=20). I also added the x value range as 0,1, I figured the narrower the range of x, the bigger the difference would be for lm and stan_glm. With n=5 observations, lm has no regul;arization and chases the noise and stan_glm's weakly informative priiors shrinks extreme estmates back toward plausible values (Gathered this interpretation from AI)
+
+---
+
+# Exercise 9.2
+
+> Predictive simulation for linear regression: Using data of interest to you, fit a linear regression. Use the output from this model to simulate a predictive distribution for observations with a particular combination of levels of all the predictors in the regression.
+
+**Answer**
+We use the [**Advertising** dataset](https://www.geeksforgeeks.org/machine-learning/dataset-for-linear-regression/), which contains 200 products' sales data and advertising budgets ($thousands) across three media channels:
+
+- `TV`: advertising budget spend on TV ($thousands)
+- `Radio`: advertising budget spent on radio ($thousands)
+- `Newspaper`: advertising budget spent on newspaper ($thousands)
+- `Sales`: product sales ($thousands)
+
+We regress `Sales` on `TV`, `Radio`, and `Newspaper` by function `stan_glm()`.
+```{r prediction_9.2}
+
+advertising <- read.csv("/Users/houpuli/Downloads/HW2/advertising.csv")
+head(advertising)
+
+# Bayesian linear regression: Sales ~ TV + Radio + Newspaper
+cor_adver_sales <- stan_glm(Sales ~ TV + Radio + Newspaper, data = advertising, refresh = 0, seed = 42)
+print(cor_adver_sales)
+```
+We then simulate a predictive distribution by function `posterior_predict()`, and imagine a scenario for a product with **TV = $150k**, **Radio = $30k**, and **Newspaper = $20k** advertising budgets.
+
+```{r prediction-plot_9.2}
+new_data <- data.frame(TV = 150, Radio = 30, Newspaper = 20)
+
+# Where the line is: parameter uncertainty only
+y_pred_sim <- posterior_predict(cor_adver_sales, newdata = new_data)
+# Where an individual child will fall: parameter + residual uncertainty
+y_hat_sim  <- posterior_linpred(cor_adver_sales, newdata = new_data)
+
+df_sim <- bind_rows(
+  data.frame(sales = as.numeric(y_hat_sim),  type = "Expected value (linpred)"),
+  data.frame(sales = as.numeric(y_pred_sim), type = "Individual observation (pred)")
+)
+
+ggplot(df_sim, aes(x = sales, fill = type)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 50,
+                 alpha = 0.6, position = "identity") +
+  labs(title = "Predictive distributions for Sales (TV=150, Radio=30, Newspaper=20)",
+       x = "Predicted Sales (thousands of units)", y = "Density",
+       fill = NULL) +
+  theme_minimal()
+```
+
+---
+
+# Exercise 9.3
+
+> Uncertainty in the predicted expectation and the forecast: Consider the economy and voting example from Section 7.1. Fit the linear regression model to the data through 2012; these are available in the folder ElectionsEconomy. Make a forecast for the incumbent party’s share of the two-party vote in a future election where economic growth is 2%.
+
+> a) Compute the point forecast, the standard deviation of the predicted expectation from (9.1),and the standard deviation of the predicted value from (9.2).
+**Answer for a)**
+
+```{r a1_9.3}
+hibbs <- read.table("/Users/houpuli/Downloads/HW2/hibbs.dat", header=TRUE)
+hibbs <- hibbs[hibbs$year <= 2012,]
+
+lm_hibbs <- lm(vote ~ growth, data = hibbs)
+
+hibbs_2 <- data.frame(growth = 2)
+y_hat_2 <- predict(lm_hibbs, newdata = hibbs_2)
+cat("point forecast is:", y_hat_2, "\n")
+
+# becuase the 9.1 ask us to use 90% confidential interval
+conf_int <- predict(lm_hibbs, newdata = hibbs_2, interval = "confidence", level = 0.90)
+```
+
+The confidence interval is constructed as:
+
+$$[\hat{y} - t_{0.975} \times SE, \quad \hat{y} + t_{0.975} \times SE]$$
+
+So the half-width of the interval $= t_{0.975} \times SE$
+
+Solving for SE:
+
+$$SE = \frac{(\text{upr} - \text{lwr})/2}{t_{0.975}}$$
+
+```{r a2_9.3}
+n <- nrow(hibbs)
+sd_pred_expect <- (conf_int[, "upr"] - conf_int[, "lwr"]) / 2 / qt(0.95, df = n - 2)
+cat("SD of predicted expectation (from 9.1):", round(sd_pred_expect, 3), "\n")
+```
+
+```{r a3_9.3}
+hibbs_bayes <- stan_glm(vote ~ growth, data = hibbs, refresh = 0, seed = 42)
+y_pred_2_bayes <- posterior_predict(hibbs_bayes, newdata = hibbs_2,seed = 42)
+sd_pred_value <- sd(as.numeric(y_pred_2_bayes))
+cat("SD of predictive value (from 9.2):", round(sd_pred_value, 3), "\n")
+```
+
+> (b) Now compute these using the relevant prediction functions discussed in Section 9.2. Check that you get the same values as in part (a) of this problem.
+**Answer for b)**
+
+```{r b_9.3}
+
+y_linpred <- posterior_linpred(hibbs_bayes, newdata = hibbs_2)
+cat("Point forecast:", mean(y_linpred), "\n")
+cat("SD of predicted expectation:", sd(y_linpred), "\n")
+
+# SD of predicted value
+y_pred <- posterior_predict(hibbs_bayes, newdata = hibbs_2,seed = 42)
+cat("SD of predicted value:", sd(as.numeric(y_pred)), "\n")
+```
+
+From above result, we can find the point forecast and SD of predicted value is the same, but the SD of predicted expectation is slightly difference.
+
+---
+
+# Exercise 9.4
+
+> Partial pooling: Consider the example in Section 9.3 of combining prior information and survey data to forecast an election. Suppose your prior forecast for a given candidate’s share of the two-party vote is 42% with a forecast standard deviation of 5 percentage points, and you have survey data in which this candidate has 54% support. Assume that the survey is a simple random sample of voters with no nonresponse, and that voters will not change their mind between the time of the survey and the election
+
+> a) When you do the calculation, it turns out that your posterior mean estimate of the candidate’s vote share is 49%. What must the sample size of the survey be?
+**Answer for a)**
+![Alt text](/Users/houpuli/Downloads/HW2/9.4_a.png)
+
+> (b) Given this information, what is the posterior probability that the candidate wins the election?
+**Answer for b)**
+![Alt text](/Users/houpuli/Downloads/HW2/9.4_b.png)
+
+---
+
+# Exercise 9.10
+
+> Prior distribution and likelihood: Consider the model, y = a + bx + error , with predictors x uniformly sampled from the range (−1, 1), independent prior distributions for the coefficients a and b, and the default prior distribution for the residual standard deviation σ. For a, assume a normal prior distribution with mean 0 and standard deviation 1; for b, assume a normal prior prior distribution with mean 0 and standard deviation 0.2.
+
+> a) Simulate n = 100 data points from this model, assuming the true parameter values are a = 1, b = 0.1, σ = 0.5. Compute the least squares estimate of a, b and compare to the Bayesian estimate obtained from stan_glm using the above priors.
+**Answer for a)**
+
+```{r 9.10a}
+set.seed(123)
+#true parameters
+a_true <-1
+b_true <-0.1
+sigma_true <-0.5
+#priors
+a ~ N(0,1)
+b ~ N(0, 0.2)
+
+#simulating 100 poitns and comparing lm and stan_lm
+n <-100
+x <- runif(n,-1,1)
+y <- a_true + b_true * x + rnorm(n, 0, sigma_true)
+dat <- data.frame(x = x, y = y)
+fit_lm <- lm(y ~ x, data = dat)
+fit_bayes <- stan_glm(
+  y ~ x,
+  data = dat,
+  prior_intercept = normal(0, 1, autoscale = FALSE),
+  prior = normal(0, 0.2, autoscale = FALSE),
+  refresh = 0
+)
+summary(fit_lm)
+print(fit_bayes)
+```
+Here, the true values are a=1, b=0.1, the OLS estimate for b is far off (0.078), because noise can affect estimation. The bayesian estimate for b is closer to 0.1 because the prior N(0,0.2) can shrink estimates toward 0 and it stabilizes estimation when the data is weak. (the interpretation related to priors is understood from AI)
+
+
+
+> (b) Repeat the simulations with different values of n. Graph the Bayes estimates for a and b as a function of n. What will these values be in the limit of n = 0? n = ∞?
+**Answer for b)**
+
+```{r}
+#9.10 b
+#Repeating simulation with different n values
+set.seed (456)
+n_vals <-c(5,10,20,50,100,200,500)
+out <- data.frame()
+
+for (n in n_vals) {
+  x <- runif(n, -1, 1)
+  y <- a_true + b_true * x + rnorm(n, 0, sigma_true)
+  dat <- data.frame(x = x, y = y)
+
+  fit_bayesian <- stan_glm(
+    y ~ x,
+    data = dat,
+    prior_intercept = normal(0, 1, autoscale = FALSE),
+    prior = normal(0, 0.2, autoscale = FALSE),
+    refresh = 0
+  )
+
+  co <- coef(fit_bayesian)
+
+  out <- rbind(out, data.frame(
+    n = n,
+    a_hat = co[1],
+    b_hat = co[2]
+  ))
+}
+plot(out$n, out$a_hat, type = "b",
+     xlab = "n", ylab = "Bayes estimate of a")
+abline(h = 0, lty = 2)
+
+plot(out$n, out$b_hat, type = "b",
+     xlab = "n", ylab = "Bayes estimate of b")
+abline(h = 0, lty = 2)
+```
+From the graph we can see, when n =0, there is no data. The estimates  near 0 (prior mean). Therefore, a=0,b=0. The estimates equal the prior means. When the n is large, the estimates move toward 1 and 0.1. I think, WHen n= infinity, the data completely dominate the prior. The bayesian estimates converge to the least square estimates. therefor a=1, b=0.1
+
+> (c) For what value of n is the Bayes estimate for a halfway between the prior mean and the least squares estimate? For what value of n is the Bayes estimate for b halfway between the prior mean and the least squares estimate?
+**Answer for c)**
+
+```{r 9.10 c}
+
+set.seed(123)
+#Used AI to generate this code as I was trying with n_grid=1:100 but when n=1, this means only one observation and the regression cannot estimate slope. 
+fit_one <- function(n) {
+  x <- runif(n, -1, 1)
+  y <- 1 + 0.1 * x + rnorm(n, 0, 0.5)
+  dat <- data.frame(x = x, y = y)
+
+  fit_lm <- lm(y ~ x, data = dat)
+  fit_bayes <- stan_glm(
+    y ~ x,
+    data = dat,
+    prior_intercept = normal(0, 1, autoscale = FALSE),
+    prior = normal(0, 0.2, autoscale = FALSE),
+    refresh = 0
+  )
+
+  c(a_lm = coef(fit_lm)[1],
+    b_lm = coef(fit_lm)[2],
+    a_bayes = coef(fit_bayes)[1],
+    b_bayes = coef(fit_bayes)[2])
+}
+
+n_grid <- 2:100
+res <- t(sapply(n_grid, fit_one))
+res <- data.frame(n = n_grid, res)
+
+res$a_half <- res$a_lm / 2
+res$b_half <- res$b_lm / 2
+
+n_a <- res$n[which.min(abs(res$a_bayes - res$a_half))]
+n_b <- res$n[which.min(abs(res$b_bayes - res$b_half))]
+
+n_a
+n_b
+```
+The bayes estimate for a is halfway between the prior mean and the least squares estimate at about n=11, while for b this happens at about n=22. It makes sense becaiuse the slope has a tighter prior, so it takes more data for the likelihood to pull it away from the prior mean.     
+
+---
