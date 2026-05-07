@@ -1,0 +1,644 @@
+---
+title: "HW 2 — Exercises 10.1, 10.5, 10.11, 11.5, 11.9, 11.11, 12.6, 12.11, 12.16"
+author: "Houpu Li, Yuyang Wu"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = "center", fig.width = 8, fig.height = 5)
+
+library(rstanarm) 
+library(ggplot2)
+library(dplyr)
+library(MASS)     
+
+theme_set(theme_bw(base_size = 13))
+```
+
+---
+
+**AI-use Announcement**
+
+> Question 10.1: We didn't use AI
+
+> Question 10.5：We used AI to help us find the online KidIQ dataset. 
+
+> Question 11.5：We used AI for 11.5(b) to help us to visualize.
+
+> Question 11.9: We used AI to help locate relevant data and to better understand part (b) of the question, specifically the meaning of “pointwise,” which I may have missed in lecture. I also used AI to learn how to obtain pointwise-related functions in R.
+
+> Question 11.11
+
+> Question 12.6: We used AI to check how to use ggplot2 functions to create scatterplots and add a regression fit line.
+
+> Question 12.11: We used AI to look up the meaning of elasticity in economics, including the concept of inelastic demand (value < 1), where quantity demanded is relatively unresponsive to price changes.
+
+> Question 12.16: We Slightly used AI to assist in summarizing the research paper. 
+
+# Exercise 10.1
+
+> 10.1 Regression with interactions: Simulate 100 data points from the model, y = b0 + b1 x + b2 z + b3 xz + error , with a continuous predictor x and a binary predictor z, coefficients b = c(1, 2, −1, −2), and errors drawn independently from a normal distribution with mean 0 and standard deviation 3, as follows. For each data point i, first draw zi , equally likely to take on the values 0 and 1. Then draw xi from a normal distribution with mean zi and standard deviation 1. Then draw the error from its normal distribution and compute yi .
+
+> (a) Display your simulated data as a graph of y vs. x, using dots and circles for the points with z = 0 and 1, respectively.
+
+```{r 10.1a}
+
+set.seed(42)
+n  <- 100
+b0 = 1
+b1 = 2
+b2 = -1
+b3 = -2
+
+# Simulate data
+z     <- rbinom(n, 1, 0.5)
+x     <- rnorm(n, mean = z, sd = 1)
+error <- rnorm(n, 0, 3)
+y     <- b0 + b1*x + b2*z + b3*x*z + error
+sim_100 <- data.frame(x = x, z = factor(z), y = y)
+
+# visualize
+ggplot(sim_100, aes(x = x, y = y, shape = z)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  scale_shape_manual(values = c(16, 1), labels = c("z = 0", "z = 1")) +
+  labs(title = "Simulated Data: y vs x by z", x = "x", y = "y")
+
+```
+> (b) Fit a regression predicting y from x and z with no interaction. Make a graph with the data and two parallel lines showing the fitted model.
+
+```{r 10.1b}
+
+reg_without_int <- lm(y ~ x + z, data = sim_100)
+coef(reg_without_int)
+
+b0 <- coef(reg_without_int)["(Intercept)"]
+b1 <- coef(reg_without_int)["x"]
+b2 <- coef(reg_without_int)["z1"]
+
+cat("z=0 intercept:", b0, "\n")
+cat("z=1 intercept:", b0+b2, "\n")
+
+# if z=0 ：y = b0 + b1*x
+# if z=1 ：y = b0 + b1*x + b2
+
+ggplot(sim_100, aes(x = x, y = y, shape = z))+
+  geom_point(size = 2.5, alpha = 0.8) +
+  scale_shape_manual(values = c(16, 1), labels = c("z = 0", "z = 1")) +
+  geom_abline(intercept = b0,    slope = b1, color = "blue") +
+  geom_abline(intercept = b0+b2, slope = b1, color = "red")
+
+```
+
+> (c) Fit a regression predicting y from x, z, and their interaction. Make a graph with the data and two lines showing the fitted model.
+
+```{r 10.1c}
+
+reg_with_int <- lm(y ~ x + z + x:z, data = sim_100)
+coef(reg_with_int)
+
+b0 <- coef(reg_with_int)["(Intercept)"]
+b1 <- coef(reg_with_int)["x"]
+b2 <- coef(reg_with_int)["z1"]
+b3 <- coef(reg_with_int)["x:z1"]
+
+# z=0：y = b0 + b1*x
+# z=1：y = (b0+b2) + (b1+b3)*x
+
+ggplot(sim_100, aes(x = x, y = y, shape = z)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  scale_shape_manual(values = c(16, 1), labels = c("z = 0", "z = 1")) +
+  geom_abline(intercept = b0,    slope = b1,    color = "blue") +
+  geom_abline(intercept = b0+b2, slope = b1+b3, color = "red")
+
+```
+
+---
+
+# Exercise 10.5
+
+> 10.5 Regression modeling and prediction: The folder KidIQ contains a subset of the children and mother data discussed earlier in the chapter. You have access to children’s test scores at age 3, mother’s education, and the mother’s age at the time she gave birth for a sample of 400 children.
+
+> (a) Fit a regression of child test scores on mother’s age, display the data and fitted model, check assumptions, and interpret the slope coefficient. Based on this analysis, when do you recommend mothers should give birth? What are you assuming in making this recommendation?
+
+```{r 10.5, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = "center", fig.width = 8, fig.height = 5)
+
+if (!requireNamespace("rosdata", quietly = TRUE)) {
+  remotes::install_github("avehtari/ROS-Examples", subdir = "rpackage")
+}
+library(rosdata)
+data("kidiq")
+
+```
+
+```{r 10.5a}
+
+fit_10_5a <- lm(kid_score ~ mom_age, data = kidiq)
+summary(fit_10_5a)
+
+ggplot(kidiq, aes(x = mom_age, y = kid_score)) +
+  geom_point(alpha = 0.4, color = "blue") +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(title = "The Correlation betweem Child Test Score and Mother's Age at Brith", x = "Mother's Age at Birth", y = "Child Test Score")
+
+# Residual check
+plot(fitted(fit_10_5a), residuals(fit_10_5a), xlab = "Fitted values", ylab = "Residuals",main = "Residual Plot", pch = 20, col = "blue")
+abline(h = 0, col = "red", lwd = 2)
+
+
+```
+
+**Interpretation:** The slope for `mom_age` is approximately `0.6952`, which present each additional year in the mother's age at birth is associated with 0.6952 point increasing in the child's test score on average. This suggests that older mothers tend to have children with slightly higher test scores. However, we cannot directly recommend that mothers should give birth later, because this relationship may be driven by confounding factors — for example, older mothers may also tend to have higher education level or more stable financial situations, which could benefit the child's development. We are assuming that the relationship between mother's age and child test score is linear and that no other important variables are omitted from the model.
+
+> (b) Repeat this for a regression that further includes mother’s education, interpreting both slope coefficients in this model. Have your conclusions about the timing of birth changed?
+
+```{r 10.5b}
+
+fit_10_5b <- lm(kid_score ~ mom_age + mom_hs, data = kidiq)
+summary(fit_10_5b)
+
+```
+**Interpretation:** After adding the binary variable `mom_hs`(whether the mother completed high school)), the coefficient of `mom_age` decreased substantially from 0.69 to 0.33, and is no longer statistically significant (p-value = 0.368). In contrast, `mom_hs` has a coefficient of 11.31 and is highly significant (p-value < 0.001), meaning that children whose mothers completed high school score on average 11.3 points higher than those whose mothers did not, holding age constant.This suggests that mother's education level is a more important predictor of child test scores than mother's age. 
+
+> (c) Now create an indicator variable reflecting whether the mother has completed high school or not. Consider interactions between high school completion and mother’s age. Also create a plot that shows the separate regression lines for each high school completion status group.
+
+```{r 10.5c}
+
+fit_10_5c <- lm(kid_score ~ mom_age + mom_hs +  mom_age:mom_hs, data = kidiq)
+summary(fit_10_5c)
+
+b0 <- coef(fit_10_5c)["(Intercept)"]
+b1 <- coef(fit_10_5c)["mom_age"]
+b2 <- coef(fit_10_5c)["mom_hs"]
+b3 <- coef(fit_10_5c)["mom_age:mom_hs"]
+
+# mom_hs=0: y = b0 + b1*mom_age
+# mom_hs=1: y = (b0+b2) + (b1+b3)*mom_age
+
+ggplot(kidiq, aes(x = mom_age, y = kid_score, shape = factor(mom_hs), color = factor(mom_hs))) +
+  geom_point(alpha = 0.5) +
+  scale_shape_manual(values = c(16, 1), labels = c("HS Failed", "HS Completed")) +
+  scale_color_manual(values = c("blue", "red"), labels = c("HS Failed", "HS Completed")) +
+  geom_abline(intercept = b0,    slope = b1,    color = "blue") +
+  geom_abline(intercept = b0+b2, slope = b1+b3, color = "red") +
+  labs(title = "Kid Score ~ Mom Age × HS Completion", x = "Mother's Age at Birth", y = "Child Test Score", shape = "HS Status", color = "HS Status")
+       
+```
+
+> (d) Finally, fit a regression of child test scores on mother’s age and education level for the first 200 children and use this model to predict test scores for the next 200. Graphically display comparisons of the predicted and actual scores for the final 200 children.
+
+```{r 10.5d}
+
+train <- kidiq[1:200, ]
+test  <- kidiq[201:400, ]
+
+fit_10_5d <- lm(kid_score ~ mom_age + mom_hs, data = train)
+pred <- predict(fit_10_5d, newdata = test)
+
+result <- data.frame(actual = test$kid_score, predicted = pred)
+result
+
+ggplot(result, aes(x = predicted, y = actual)) +
+  geom_point(alpha = 0.5, color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "The Comparison between Predicted and Actual Scores", x = "Predicted Score", y = "Actual Score")
+
+```
+
+---
+
+# Exercise 10.11
+
+> Working through your own example: Continuing the example from the final exercises of the earlier chapters, fit a linear regression with multiple predictors and interpret the estimated parameters and their uncertainties. Your regression should include at least one interaction term.
+
+```{r 10.11}
+
+advertising <- read.csv("/Users/houpuli/Downloads/HW2/advertising.csv")
+
+fit_10_11_a <- lm(Sales ~ TV + Radio + Newspaper, data = advertising)
+summary(fit_10_11_a)
+
+fit_10_11_b <- lm(Sales ~ TV + Radio + Newspaper + TV:Radio, data = advertising)
+summary(fit_10_11_b)
+
+```
+
+**Interpretation:** We regress Sales on TV, Radio, and Newspaper advertising spending. In the baseline model, TV (0.054, p < 0.001) and Radio (0.107, p < 0.001) are both significant positive predictors of sales, while Newspaper (0.0003, p = 0.954) has no meaningful effect. Adding a TV*Radio interaction term improves the model (R² from 0.903 to 0.914), and the interaction term is highly significant (0.00044, p < 0.001), indicating that the combination of TV and Radio have a better sales effect. 
+
+---
+
+# Exercise 11.5
+
+> Residuals and predictions: The folder Pyth contains outcome y and predictors x1, x2 for 40 data points, with a further 20 points with the predictors but no observed outcome. Save the file to your working directory, then read it into R using read.table().
+
+> (a) Use R to fit a linear regression model predicting y from x1, x2, using the first 40 data points in the file. Summarize the inferences and check the fit of your model.
+
+```{r 11.5a}
+
+data("pyth")
+
+train_11_5 <- pyth[1:40, ]
+test_11_5  <- pyth[41:60, ]   # y is NA for these rows
+
+fit_11_5a <- lm(y ~ x1 + x2, data = train_11_5)
+summary(fit_11_5a)
+
+```
+**Interpretation:**: Both x1 (0.515, p < 0.001) and x2 (0.807, p < 0.001) are significant positive predictors of y. The R² = 0.972, which means our model fits the data very well.
+
+> (b) Display the estimated model graphically as in Figure 11.2.
+
+```{r 11.5b1}
+
+knitr::include_graphics("/Users/houpuli/Downloads/11.2.png")
+
+```
+Accoding to the inspiration of 11.2, "shown as a fuction of each of the two input variables with the other held at its average value"
+
+```{r 11.5b}
+
+par(mfrow = c(1, 2))
+
+x1_mean <- mean(train_11_5$x1)
+x2_mean <- mean(train_11_5$x2)
+
+# left：x1 no change，but x2 at average level
+plot(train_11_5$x1, train_11_5$y, xlab = "x1", ylab = "y", main = "y vs x1 (x2 at mean)")
+abline(a = coef(fit_11_5a)["(Intercept)"] + coef(fit_11_5a)["x2"] * x2_mean,
+       b = coef(fit_11_5a)["x1"], col = "blue", lwd = 2)
+
+# right：x2 no change，x1 at average level 
+plot(train_11_5$x2, train_11_5$y, xlab = "x2", ylab = "y", main = "y vs x2 (x1 at mean)")
+abline(a = coef(fit_11_5a)["(Intercept)"] + coef(fit_11_5a)["x1"] * x1_mean,
+       b = coef(fit_11_5a)["x2"], col = "red", lwd = 2)
+
+par(mfrow = c(1, 1))
+
+```
+
+> (c) Make a residual plot for this model. Do the assumptions appear to be met?
+
+```{r 11.5c}
+
+plot(fitted(fit_11_5a), residuals(fit_11_5a), xlab = "Fitted values", ylab = "Residuals",main = "Residual Plot", pch = 20, col = "blue")
+abline(h = 0, col = "red", lwd = 2)
+
+```
+**Interpretation:** The residuals appear randomly scattered around 0 with roughly constant variance, suggesting the homoscedasticity assumptions are reasonably met.
+
+(d) Make predictions for the remaining 20 data points in the file. How confident do you feel about these predictions?
+
+```{r 11.5d}
+
+pred_11_5 <- predict(fit_11_5a, newdata = test_11_5, interval = "prediction")
+pred_11_5
+
+pred_df   <- data.frame(
+  point = 41:60,
+  fit   = pred_11_5[, "fit"],
+  lwr   = pred_11_5[, "lwr"],
+  upr   = pred_11_5[, "upr"]
+)
+
+ggplot(pred_df, aes(x = point, y = fit)) +
+  geom_point(color = "red", size = 3) +
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.4, color = "blue", alpha = 0.6) +
+  labs(title = "Predictions with 95% Prediction Intervals (Points 41–60)",
+       x = "Data Point Index", y = "Predicted y")
+
+```
+
+---
+
+# Exercise 11.9
+
+> 11.9 Leave-one-out cross validation: Use LOO to compare different models fit to the beauty and teaching evaluations example from Exercise 10.6:
+
+> (a) Discuss the LOO results for the different models and what this implies, or should imply, for model choice in this example.
+
+```{r 11.9a}
+
+library(rstanarm)   # Bayesian regression with LOO built in
+library(loo)        # LOO-CV utilities
+library(ggplot2)
+library(dplyr)
+url <- "https://raw.githubusercontent.com/avehtari/ROS-Examples/master/Beauty/data/beauty.csv"
+beauty <- read.csv(url)
+head(beauty)
+summary(beauty[, c("eval", "beauty", "female", "age", "minority", "nonenglish", "lower")])
+
+```
+
+
+```{r }
+
+fit1 <- stan_glm(eval ~ beauty, data = beauty, seed = 123, refresh = 0)
+# Exercise 10.6 baseline
+fit2 <- stan_glm(eval ~ beauty + female, data = beauty, seed = 123, refresh = 0)
+fit3 <- stan_glm(eval ~ beauty + female + age + minority + nonenglish + lower, data = beauty, seed = 123, refresh = 0)
+fit4 <- stan_glm(eval ~ beauty * female + age + minority + nonenglish + lower, data = beauty, seed = 123, refresh = 0)
+
+loo1 <- loo(fit1, save_psis = TRUE)
+loo2 <- loo(fit2, save_psis = TRUE)
+loo3 <- loo(fit3, save_psis = TRUE)
+loo4 <- loo(fit4, save_psis = TRUE)
+
+```
+
+```{r }
+print(loo1)
+print(loo2)
+print(loo3)
+print(loo4)
+```
+
+```{r }
+
+comp <- loo_compare(loo1, loo2, loo3, loo4)
+print(comp)
+
+```
+**Interpretation:** loo_compare ranks models by ELPD (expected log predictive density). And Higher ELPD means better out-of-sample predictive accuracy. The ratio elpd_diff / se_diff is like asking: "Is this gap big enough to trust, or could it just be noise?" In our case,only fit1 compares to fit4 has a high ratio, So, all 3 models (fit 2 3 4) predict similarly well. No model clearly beats the others. It means sometime adding more predictors gives modest but not dramatic improvement. 
+
+> (b) Compare predictive errors pointwise. Are there some data points that have high predictive errors for all the fitted models?
+
+```{r 11.9b}
+
+pw1 <- loo1$pointwise[, "elpd_loo"]
+pw2 <- loo2$pointwise[, "elpd_loo"]
+pw3 <- loo3$pointwise[, "elpd_loo"]
+pw4 <- loo4$pointwise[, "elpd_loo"]
+
+pointwise_df <- data.frame(
+  obs    = seq_len(nrow(beauty)),
+  eval   = beauty$eval,
+  err1   = -pw1,
+  err2   = -pw2,
+  err3   = -pw3,
+  err4   = -pw4
+)
+
+# Average error
+pointwise_df$mean_err <- rowMeans(pointwise_df[, c("err1","err2","err3","err4")])
+threshold <- quantile(pointwise_df$mean_err, 0.90)  
+pointwise_df$high_error <- pointwise_df$mean_err > threshold
+# Observations with High Predictive Error
+hard_cases <- pointwise_df %>%
+  filter(high_error) %>%
+  arrange(desc(mean_err)) %>%
+  dplyr::select(obs, eval, err1, err2, err3, err4, mean_err)
+print(hard_cases)
+
+```
+
+**Interpretation:** The hard_cases table shows observations where ALL four models, the errors are consistently high across err1 to err4.
+
+---
+
+# Exercise 11.11
+
+> Working through your own example: Continuing the example from the final exercises of the earlier chapters, graph and check the fit of the model you fit in Exercise 10.11 and discuss the assumptions needed to use it to make real-world inferences.
+
+```{r 11.11}
+
+plot(fitted(fit_10_11_b), residuals(fit_10_11_b), xlab = "Fitted values", ylab = "Residuals",main = "Residual Plot", pch = 20, col = "blue")
+abline(h = 0, col = "red", lwd = 2)
+
+```
+**Interpretation:** The residual plot shows that residuals are roughly randomly scattered around 0 across all fitted values, suggesting the linearity and constant variance assumptions are reasonably met. However, there is one notable outlier around fitted value = 10,  Overall, the model assumptions appear to be adequately satisfied.
+
+---
+
+# Exercise 12.6
+
+> Logarithmic transformations: The folder Pollution contains mortality rates and various environmental factors from 60 U.S. metropolitan areas (see McDonald and Schwing, 1973). For this exercise we shall model mortality rate given nitric oxides, sulfur dioxide, and hydrocarbons as inputs. This model is an extreme oversimplification, as it combines all sources of mortality and does not adjust for crucial factors such as age and smoking. We use it to illustrate log transformations in regression.
+
+> (a) Create a scatterplot of mortality rate versus level of nitric oxides. Do you think linear regression will fit these data well? Fit the regression and evaluate a residual plot from the regression.
+
+The data are right-skewed, a few very high nox values stretch the x-axis,suggesting linear regression will not fit well. For residule plot, almost all fitted values are clumped between 939–945, with just 2 isolated points far to the left (910, 924). This means the model is predicting nearly the same value for almost every observation. And the residual seems to have a funnel. 
+
+```{r 12.6a1}
+
+library(ggplot2)
+library(dplyr)
+url <- "https://raw.githubusercontent.com/avehtari/ROS-Examples/master/Pollution/data/pollution.csv"
+pollution <- read.csv(url)
+p_a <- ggplot(pollution, aes(x = nox, y = mort)) +
+  geom_point(color = "blue", size = 2) +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(
+    title = "(a) Mortality Rate vs Nitric Oxides",
+    x = "Nitric Oxides",
+    y = "Mortality Rate"
+  ) +
+  theme_bw()
+print(p_a)
+
+```
+```{r 12.6a2}
+
+fit1 <- lm(mort ~ nox, data = pollution)
+summary(fit1)
+pollution$resid1  <- residuals(fit1)
+pollution$fitted1 <- fitted(fit1)
+
+p_resid <- ggplot(pollution, aes(x = fitted1, y = resid1)) +
+  geom_point(color = "blue", size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Residual Plot",
+    x = "Fitted Values",
+    y = "Residuals"
+  ) +
+  theme_bw()
+print(p_resid)
+
+```
+
+
+> (b) Find an appropriate transformation that will result in data more appropriate for linear regression. Fit a regression to the transformed data and evaluate the new residual plot.
+
+Chose the log transformation, becasue the data is right-skewed, and then the results are much better
+
+```{r 12.6b}
+
+p_log <- ggplot(pollution, aes(x = log(nox), y = mort)) +
+  geom_point(color = "blue", size = 2) +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(
+    title = "Mortality Rate vs log(Nitric Oxides)",
+    x = "log(Nitric Oxides)",
+    y = "Mortality Rate"
+  ) +
+  theme_bw()
+print(p_log)
+
+
+
+fitlog <- lm(mort ~ log(nox), data = pollution)
+summary(fitlog)
+pollution$residlog  <- residuals(fitlog)
+pollution$fittedlog <- fitted(fitlog)
+
+p_residlog <- ggplot(pollution, aes(x = fittedlog, y = residlog)) +
+  geom_point(color = "blue", size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Residual Plot (log)",
+    x = "Fitted Values",
+    y = "Residuals"
+  ) +
+  theme_bw()
+print(p_residlog)
+
+```
+
+> (c) Interpret the slope coefficient from the model you chose in (b)
+
+The model is:  mort = β0 + β1 * log(nox), so a one-unit increase in log(nox) (corresponds to multiplying nox by e (~2.718)) is associated with a change of β1 in the mortality rate. The β1 is 15.335 from model fitlog. We can also say each doubling of nitric oxide levels is associated with a 10.63 unit change in mortality rate.
+
+```{r 12.6c}
+
+n = coef(fitlog)["log(nox)"] * log(2)
+n
+
+```
+
+> (d) Now fit a model predicting mortality rate using levels of nitric oxides, sulfur dioxide, and hydrocarbons as inputs. Use appropriate transformations when helpful. Plot the fitted regression model and interpret the coefficients.
+
+```{r 12.6d1}
+
+fit_multi <- lm(mort ~ log(nox) + log(so2) + log(hc), data = pollution)
+summary(fit_multi)
+
+pollution$ fitted_multi <- fitted(fit_multi)
+ 
+p_fitmulti <- ggplot(pollution, aes(x =  fitted_multi, y = mort)) +
+  geom_point(color = "blue", size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Fitted vs Actual Mortality",
+    subtitle = "Model: mort ~ log(nox) + log(so2) + log(hc)",
+    x = "Fitted Mortality Rate",
+    y = "Actual Mortality Rate"
+  ) +
+  theme_bw()
+print(p_fitmulti)
+
+pollution$residmulti <- residuals(fit_multi)
+ 
+p_resid_multi <- ggplot(pollution, aes(x = fitted_multi, y = residmulti)) +
+  geom_point(color = "blue", size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Residual Plot — multi",
+    x = "Fitted Values",
+    y = "Residuals"
+  ) +
+  theme_bw()
+print(p_resid_multi)
+
+```
+doubling nox is related to 40.44 change in mortality (holding others fixed)
+doubling so2 is related to 8.15 change in mortality (holding others fixed)
+doubling hc  is related to -39.72 change in mortality (holding others fixed)
+
+```{r 12.6d2}
+
+n1 = coef(fit_multi)["log(nox)"] * log(2)
+n2 = coef(fit_multi)["log(so2)"] * log(2)
+n3 = coef(fit_multi)["log(hc)"] * log(2)
+
+n1
+n2
+n3
+
+```
+
+> (e) Cross validate: fit the model you chose above to the first half of the data and then predict for the second half. You used all the data to construct the model in (d), so this is not really cross validation, but it gives a sense of how the steps of cross validation can be implemented.
+
+
+The model explains about 25% of the variation in mortality (R² = 0.252) and has prediction errors of about 61 (RMSE) on the test set and 43 (MAE) on average, indicating a weak-to-moderate fit with fairly large errors.
+
+```{r 12.6e1}
+
+n       <- nrow(pollution)
+half    <- floor(n / 2)
+train   <- pollution[1:half, ]
+test    <- pollution[(half + 1):n, ]
+fit_half   <- lm(mort ~ log(nox) + log(so2) + log(hc), data = train)
+summary(fit_half)
+pred_half  <- predict(fit_half, newdata = test)
+rmse    <- sqrt(mean((test$mort - pred_half)^2))
+mae     <- mean(abs(test$mort - pred_half))
+
+rmse
+mae
+
+```
+
+```{r 12.6e2}
+
+df <- data.frame(actual = test$mort, predicted = pred_half)
+ 
+p_half <- ggplot(df, aes(x = predicted, y = actual)) +
+  geom_point(color = "blue", size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Predicted vs Actual (test half)",
+    x = "Predicted Mortality Rate",
+    y = "Actual Mortality Rate"
+  ) +
+  theme_bw()
+print(p_half)
+
+```
+
+---
+
+# Exercise 12.11
+
+> Elasticity: An economist runs a regression examining the relations between the average price of cigarettes, P, and the quantity purchased, Q, across a large sample of counties in the United States, assuming the functional form, log Q = α + β log P. Suppose the estimate for β is −0.3. Interpret this coefficient
+
+This is a log-log model (both outcome and predictor are log-transformed), which gives a direct elasticity interpretation. A 1% increase in the average price of cigarettes is associated with a 0.3% decrease in the quantity purchased, on average across counties. And in economic study,  |β| < 1 means demand is inelastic, people don't cut back much when prices rise. This is typical for cigarettes because they are addictive, so consumers are not very price-sensitive.
+
+---
+
+# Exercise 12.16
+
+> Applying ideas of regression: Read a published article that uses regression modeling and is on a topic of interest to you. Write a page or two evaluating and criticizing the article, addressing issues discussed in Chapters 1–12, such as measurement, data visualization, modeling, inference, simulation, regression, assumptions, model checking, interactions, and transformations. The point of this exercise is not to come up with a comprehensive critique of the article but rather to review the key points of this book so far in the context of a live example.
+
+
+#Paper: [Commute well-being differences by mode: Evidence from Portland, Oregon, USA](https://www.sciencedirect.com/science/article/pii/S2214140516302407#s0015)
+
+#Overview:
+This paper examines what factors shape how satisfied people feel about their commute to work, using survey data from 828 workers in Portland, Oregon. The study uses multiple linear regression to predict a "commute well-being" (CWB) score based on travel mode, trip attributes, attitudes, and demographics. 
+
+#Measurement:
+In this paper CWB is not a single, directly observable quantity, it is a composite score averaged from seven survey questions measuring both affective (emotional) and cognitive (evaluative) responses to commuting. Instead of asking only one question like “Are you satisfied with your commute?”, the author uses a seven-item scale adapted from previous research. This is better because well-being is not a simple concept. The author validates this scale using confirmatory factor analysis and reports a Cronbach's alpha of 0.87, which indicates good internal consistency. That said, averaging across seven items into a single score involves assumptions about equal weighting that are never fully justified. It is also worth noting that the CWB scale uses a bipolar rating system (e.g., "tense" to "relaxed") where the midpoint is zero, meaning scores can be negative.  The paper acknowledges that the distribution is slightly skewed but argues it is close enough to normal to proceed, citing skewness and kurtosis thresholds from West et al. (1995). However, the measure is still based on self-reported feelings, so it may be affected by mood, personality, or events that happened on that specific day. For example, someone who had a bad morning at work might rate their commute more negatively even if the commute itself was normal. Therefore, it is worth questioning the construct validity of the measure, because it is not completely clear whether it truly captures the concept of commute well-being or whether it partly reflects temporary emotions and personal circumstances.
+
+#Data and Sample:
+The data come from a web-based survey distributed through employers and intercept recruitment on bridges, with an estimated response rate of 30%. This raises real concerns about selection bias. People who are motivated to complete a survey about commuting may systematically differ from those who do not. Besides, The survey was collected from workers in central Portland, and Portland is also known for having higher rates of biking and transit use than many U.S. cities. This makes the study interesting, but it limits generalizability. For instance, cyclists may be overrepresented. The paper acknowledges that the sample skews whiter, younger, and more educated than Portland commuters overall, which limits generalizability. From a regression standpoint, if the sample is not representative, the coefficients may not generalize well to other populations or cities, even if the internal model fit looks good.
+
+#Data visualization:
+The data visualization in the paper is useful but limited. Figure 2 shows the distribution of CWB scores as a histogram, which is useful , although it is  slightly skewed. Figure 3 shows predicted CWB by mode and congestion scenario as a bar chart, which is helpful for interpretation. However, the paper is missing a scatterplot matrix or correlation plot of the key predictors, which would help the reader assess potential multicollinearity. Also it would be helpful to have boxplots comparing commute time and well-being by mode would help readers see the raw data before looking at the regression model. There is also no residual plot from the regression model, which is a standard model-checking tool discussed throughout the ROS textbook. Without a residual plot, it is hard to assess whether the linearity and equal-variance assumptions of OLS regression are satisfied. Overall this paper relies heavily on tables instead of figures. 
+
+#Regression Modeling and Assumptions:
+The regression model is a standard OLS multiple linear regression with an adjusted R² of 0.438, which the author describes as "high." This is a reasonable fit for a behavioral outcome with many unmeasured influences. The model includes mode indicators, trip attributes, job and residential satisfaction, health, income, and several attitude variables. And it includes interaction terms between attitudes and travel modes. This is a useful modeling choice because the effect of an attitude may not be the same for every commuter. For example, believing that the commute is a useful transition between home and work may affect bus riders differently from cyclists. However, the attitudinal variable called “Use trip productively" is not explained very clearly in the paper. The author appears to measure it through agreement with the statement “I use my trip to/from work productively,” but the paper does not define what counts as productive. For different commuters, productivity could mean working, reading, listening to information, planning the day, or simply relaxing. Because the meaning of this variable is ambiguous, it raises a measurement concern: respondents may have interpreted the question in different ways. This weakens the construct validity of the variable.
+
+The paper uses multiple regression to control for travel time, congestion, income, health, job satisfaction, residential satisfaction, and attitudes. This assumes that after controlling for these variables, the remaining difference between bike, walk, transit, and car commuters can be meaningfully compared. But this is still observational data, not an experiment. People choose their commute modes, so cyclists may already differ from drivers in unmeasured ways, such as personality, lifestyle, flexibility at work, neighborhood safety, or preference for exercise. The regression model also assumes that the relationships are mostly linear and additive. However, the paper does not show much model checking, such as residual plots or tests for unequal variance.
+
+#Inference and Interpretation
+The paper reports unstandardized coefficients, which is appropriate since the predictors are mostly binary (categorical dummies). The interpretation is generally clear: for example, biking is associated with a 0.512 unit increase in CWB compared to the reference category, holding other variables constant. However, the paper does not report confidence intervals which makes it harder to assess the practical magnitude of uncertainty around each estimate. From the ROS perspective, showing uncertainty through intervals is generally more informative than relying solely on significance thresholds.
+
+
+---
