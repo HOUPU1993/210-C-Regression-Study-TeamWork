@@ -1,0 +1,203 @@
+---
+title: "Lab 5-Houpu Li"
+subtitle: "Santa Barbara Single-Family Home Sales - Spatial Regression"
+author: "Houpu Li"
+date: "\\today"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    code_folding: show
+    theme: readable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.align = "center", fig.width = 7, fig.height = 5)
+```
+
+# Overview
+
+This exercise asks you to design and execute a complete spatial regression analysis on the Santa Barbara single-family home sales dataset. Formulate your own research question, choose your own weights matrix on substantive grounds, fit several candidate spatial specifications, and defend a preferred model against alternatives.
+
+
+# Shared setup
+
+Please use the data preparation code below. Adjust as your research question requires.
+
+```{r load}
+library(tidyverse); library(sf); library(spdep); library(spatialreg)
+
+dat <- read_csv("5-1-25 to 4-30-26 Sold Homes Data_with_ACS.csv",
+                show_col_types = FALSE) %>%
+  filter(`Book Section` == "Home/Estate") %>%
+  rename(sold_price = `Sold Price`, year_built = `Year Built`,
+         beds = `Total Bedrooms`, baths = `Total Bathrooms`,
+         acres_raw = `Apx # Acres`, adu_raw = ADU) %>%
+  mutate(log_price = log(sold_price),
+         age       = 2026 - year_built,
+         acres     = as.numeric(acres_raw),
+         adu       = as.integer(str_starts(str_to_lower(str_trim(adu_raw)), "y"))) %>%
+  filter(!is.na(acs_median_household_income),
+         !is.na(acs_homeownership_rate))
+
+dat <- dat %>%
+  filter(!is.na(log_price), !is.na(beds), !is.na(baths),
+         !is.na(age), !is.na(acres),
+         !is.na(acs_median_household_income),
+         !is.na(acs_homeownership_rate), !is.na(adu))
+
+coords   <- as.matrix(dat[, c("longitude", "latitude")])
+coords_m <- cbind((coords[,1] - mean(coords[,1])) * 92000,
+                  (coords[,2] - mean(coords[,2])) * 111000)
+```
+
+# Part 1: Develop a research question
+
+Spatial regression is a method for answering specific substantive questions about how outcomes are organized in space. Before fitting any model, articulate what you want to learn.
+
+A defensible research question for this dataset should:
+
+1. Identify an outcome (the log sale price).
+
+> The outcome variable is the log sale price (`log_price`) of single-family homes in Santa Barbara County.
+
+2. Identify the substantive mechanism you hypothesize is generating spatial dependence: comparable-sales feedback among neighboring listings, omitted neighborhood amenities, contextual effects from neighbor characteristics, or some combination.
+
+> I think there are two potential mechanisms happened together in this case First, there's a **house price-autocorrelation** mechanism: Sellers and buyers often look at nearby home sales when deciding how much a house is worth, so neighboring prices directly influence each other. That’s the part that a spatial lag model can help capture. Second, there are **omitted neighborhood amenities-autocorrelation** mechanism: nearby houses also tend to share many unobserved neighborhood characteristic such as ocean views, neighborhood safety, or other amenities(distance to grocery stores, resturant, bus stations, etc). Those shared but unmeasured factors can create correlated errors across nearby homes, that’s the part that a spatial error model can help capture. 
+
+## Deliverable
+
+Write two to three paragraphs articulating:
+
+1. Your research question, as concretely as you can state it.
+
+> The main question is whether nearby home prices directly influence one another — meaning that one sale affects the next sale nearby — or whether home prices are mainly influenced by shared neighborhood characteristics which we didn’t measure.
+
+2. The substantive mechanism you hypothesize. Which spatial specification most naturally corresponds to that mechanism, and why?
+
+> The substantive mechanism I hypothesize is that housing prices are influenced by nearby home sales. As I mentioned earlier, sellers and buyers often look at recent sales in the surrounding neighborhood when deciding how much a house is worth. As a result, nearby home prices can directly influence one another, and this type of spatial interaction can be captured by a spatial lag model.
+
+3. Two predictions you would expect to see in the estimation results if your hypothesis is correct, and one finding that would lead you to reject it.
+
+> I would like to expect the spatial lag coefficient to be signifcantly, suggesting the nearby housing prices influence surrounding one, as well as spatial lag model should fit better compare to fundamental OLS model.
+
+# Part 2: Specify a candidate set of weights matrices
+
+The choice of weights matrix encodes your prior about the geographic scale at which the spatial mechanism operates. Justify your choices substantively, not statistically.
+
+Build at least four candidate weights matrices spanning a range of plausible neighborhood definitions. Suggested options:
+
+- A K-nearest-neighbors weights matrix with K small (e.g., K=4 to K=10), corresponding to a comparable-sales mechanism.
+- A K-nearest-neighbors weights matrix with K larger (e.g., K=15 to K=25), corresponding to a broader micro-market mechanism.
+- A distance-band weights matrix at one or two radii (e.g., 1 km, 2 km), corresponding to a neighborhood-amenity mechanism.
+- An exponential or Gaussian kernel weights matrix with a chosen decay scale, corresponding to a smooth-influence mechanism.
+- A block-group-membership weights matrix (binary contiguity within the same `block_group_geoid`), corresponding to an administrative-boundary mechanism.
+
+## Deliverable
+
+Summarize your candidate weights matrices. For each, report the type (KNN, band, kernel, contiguity), the tuning parameter, the average and maximum number of nonzero neighbors per row, and a one-sentence justification for why this specification is consistent with one of the mechanisms in Part 1. Identify one specification as your primary, theoretically preferred W, and state which mechanism it represents.
+
+```{r weights}
+# W_knn5: KNN k=5 
+W_knn5 <- nb2listw(knn2nb(knearneigh(coords_m, k = 5)), style = "W")
+
+# W_knn20: KNN k=20
+W_knn20 <- nb2listw(knn2nb(knearneigh(coords_m, k = 20)), style = "W")
+
+# W_dist2k: Distance band= 2km
+nb_dist2km <- dnearneigh(coords_m, 0, 2000)
+zero_idx <- which(card(nb_dist2km) == 0)
+if (length(zero_idx) > 0) {
+  knn1 <- knn2nb(knearneigh(coords_m, k = 1))
+  for (i in zero_idx) nb_dist2km[[i]] <- knn1[[i]]
+}
+W_dist2 <- nb2listw(nb_dist2km, style = "W")
+
+# W_kernel: Gaussian bandwidth = 2000m
+dist_mat <- as.matrix(dist(coords_m))
+diag(dist_mat) <- 0
+bandwidth <- 2000
+kernel_mat <- exp(-(dist_mat^2) / (2 * bandwidth^2))
+diag(kernel_mat) <- 0
+W_kernel <- mat2listw(kernel_mat, style = "W")
+
+# Summary of all W matrices
+cat("W_knn5  | type: KNN      | k=5            | avg neighbors:", mean(card(knn2nb(knearneigh(coords_m, k=5)))),  "| max:", max(card(knn2nb(knearneigh(coords_m, k=5)))), "\n")
+cat("W_knn20 | type: KNN      | k=20           | avg neighbors:", mean(card(knn2nb(knearneigh(coords_m, k=20)))), "| max:", max(card(knn2nb(knearneigh(coords_m, k=20)))), "\n")
+cat("W_dist2 | type: Distance | band=2000m     | avg neighbors:", round(mean(card(nb_dist2km)), 1), "| max:", max(card(nb_dist2km)), "\n")
+cat("W_kernel| type: Kernel   | bandwidth=2000m| avg neighbors:", round(mean(rowSums(kernel_mat > 0.01)), 1), "| max:", max(rowSums(kernel_mat > 0.01)), "\n")
+```
+**Primary W:** W—knn5 (KNN k=5), corresponding to the **comparable-sales feedback** mechanism.
+
+# Part 3: Fit and compare spatial models
+
+For your primary W, fit at minimum the following specifications:
+
+1. OLS (no spatial structure).
+2. Spatial lag model (SLM)
+3. Spatial error model (SEM)
+
+For at least one of these, also fit it with each of your alternative weights matrices from Part 2, so you can examine W-sensitivity.
+
+```{r models}
+model <- log_price ~ beds + baths + age + acres + log(acs_median_household_income) + acs_homeownership_rate + adu
+
+# 1. OLS
+ols_fit <- lm(model, data = dat)
+
+# 2. Spatial Lag Model (SLM)  - knn:5
+slm_fit <- lagsarlm(model, data = dat, listw = W_knn5)
+
+# 3. Spatial Lag Model (SLM)  - Gussian Kernel
+slm_fit_2 <- lagsarlm(model, data = dat, listw = W_kernel)
+
+# 4. Spatial Error Model (SEM)
+sem_fit <- errorsarlm(model, data = dat, listw = W_knn5)
+```
+
+
+```{r lm-tests}
+# LM tests under primary W
+lm_tests <- lm.LMtests(ols_fit, W_knn5, test = "all")
+summary(lm_tests)
+
+cat("OLS AIC:", AIC(ols_fit), "\n")
+cat("SLM AIC:", AIC(slm_fit), "\n")
+cat("SEM AIC:", AIC(sem_fit), "\n")
+```
+> Both the spatial error and spatial lag tests are significant, which suggests that there is spatial dependence on them. After looking at the robust versions of the tests, the robust spatial lag statistic(adjRSlag) is much larger than the robust spatial error statistic(adjRSerr), which indicates that the spatial lag model is likely the more appropriate specification. And the AIC results tell a similar story. The OLS model performs the worst, while the spatial lag model has a lower AIC than the spatial error model, suggesting that the spatial lag model provides the best overall fit among all models.
+Therefore, we can make conclusion: in this case there is no disagreement, SLM is the preferred model.
+
+
+```{r coef-table}
+# Side-by-side coefficient table
+ols_coef  <- coef(summary(ols_fit))
+slm_coef  <- coef(summary(slm_fit))
+slm_coef2 <- coef(summary(slm_fit_2))
+sem_coef  <- coef(summary(sem_fit))
+
+vars <- c("(Intercept)", "beds", "baths", "age", "acres",
+          "log(acs_median_household_income)", "acs_homeownership_rate", "adu")
+
+coef_table <- data.frame(
+  Variable  = vars,
+  OLS_est   = round(ols_coef[vars, 1],  4),
+  OLS_se    = round(ols_coef[vars, 2],  4),
+  SLM_est   = round(slm_coef[vars, 1],  4),
+  SLM_se    = round(slm_coef[vars, 2],  4),
+  SLM2_est  = round(slm_coef2[vars, 1], 4),
+  SLM2_se   = round(slm_coef2[vars, 2], 4),
+  SEM_est   = round(sem_coef[vars, 1],  4),
+  SEM_se    = round(sem_coef[vars, 2],  4)
+)
+
+knitr::kable(coef_table, caption = "Coefficient estimates: OLS vs SLM(KNN=5) vs SLM2(KNN=Gussian Kernal) vs SEM (KNN k=5)", row.names = FALSE)
+```
+
+Does the direction or magnitude of the coefficient on your one most important covariate change meaningfully across OLS, SLM, SEM? What does that pattern of shifts tell you about the spatial mechanism actually present in the data?
+
+> I focus on `baths` as the most important covariate since it has the largest and most consistent effect on home prices. In OLS, the coefficient is 0.3508, meaning each additional bathroom is associated with about a 35% higher sale price. In SLM (KNN k=5) it drops to 0.2189, when KNN=8, the value increase to 0.2459, and in SEM it drops to 0.2131. 
+The coefficient drop pattern from OLS to spatial models suggests that OLS was overesitimating the effect of bathrooms because without controlling for spatial structure, OLS consider the overall neighborhood-level price premium into the baths coefficient. The fact that SLM and SEM give very similar coefficients tells us the structural effect of bathrooms is stable regardless of which spatial mechanism we assume, meaning the result is robust.
+

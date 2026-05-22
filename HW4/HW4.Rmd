@@ -1,0 +1,256 @@
+---
+title: "HW 4 — Exercises 13.3, 13.5, 13.11"
+author: "Houpu Li, Yuyang Wu"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = "center", fig.width = 8, fig.height = 5)
+
+library(rstanarm) 
+library(ggplot2)
+library(dplyr)
+library(MASS)     
+
+theme_set(theme_bw(base_size = 13))
+```
+
+---
+
+# 13.3 Understanding logistic regression coefficients
+
+Understanding logistic regression coefficients: In Chapter 7 we fit a model predicting incumbent party’s two-party vote percentage given economic growth: `vote = 46.2 + 3.1 ∗ growth + error`, where growth ranges from −0.5 to 4.5 in the data, and errors are approximately normally distributed with mean 0 and standard deviation 3.8. Suppose instead we were to fit a logistic
+regression, Pr(vote > 50) = logit−1 (a + b ∗ growth). Approximately what are the estimates of(a, b)?
+
+Figure this out in four steps: 
+
+> (1) use the fitted linear regression model to estimate Pr(vote > 50) for different values of growth.
+
+```{r 13.3_1}
+
+growth_vals <- seq(-0.5, 4.5, by = 0.1) # step = 0.1
+mu <- 46.2 + 3.1 * growth_vals      
+sd <- 3.8                          
+prob <- 1 - pnorm(50, mean = mu, sd = sd) 
+
+data.frame(growth = growth_vals, mu = mu, prob = prob)
+
+```
+
+> (2) second, plot these probabilities and draw a logistic curve through them.
+
+```{r 13.3_2}
+
+plot(growth_vals, prob,
+     xlab = "Economy Growth", ylab = "Pr(vote > 50)",
+     main = "Logistic curve",
+     pch = 12, col = "black", ylim = c(0, 1))
+
+fit <- glm(prob ~ growth_vals, family = binomial(link = "logit"))  
+lines(growth_vals,
+      predict(fit, newdata = data.frame(growth_vals = growth_vals), type = "response"),
+      col = "red", lwd = 2)
+abline(h = 0.5, lty = 2)
+
+```
+
+> (3) use the divide-by-4 rule to estimate the slope of the logistic regression model.
+
+```{r 13.3_3}
+
+max_slope_normal <- dnorm(0, mean = 0, sd = sd) * 3.1 
+b_estimate <- max_slope_normal * 4  #slope = b/4 and thus b = slope × 4
+cat("the esitimate slope b is:", round(b_estimate, 3), "\n")
+
+```
+
+> (4) use the point where the probability goes through 0.5 to deduce the intercept. Do all this using the above information, without downloading the data and fitting the model.
+
+```{r 13.3_4}
+
+growth_50 <- (50 - 46.2) / 3.1 # Pr(vote > 50) = 0.5, when mu = 50, the function will be: 46.2 + 3.1 * growth = 50
+cat("The value of growth when Pr=0.5:", round(growth_50, 3), "\n")
+
+a_estimate <- -b_estimate * growth_50 # logit(0.5) = 0 = a + b * growth_50， a = -b * growth_50
+cat("the esitimate intercept a is:", round(a_estimate, 3), "\n")
+
+```
+
+---
+
+# 13.5 Interpreting logistic regression coefficients
+Here is a fitted model from the Bangladesh analysis predicting whether a person with high-arsenic drinking water will switch wells, given the
+arsenic level in their existing well and the distance to the nearest safe well:
+stan_glm(formula = switch ~ dist100 + arsenic, family=binomial(link="logit"), data=wells)
+Median MAD_SD
+(Intercept) 0.00 0.08
+dist100 -0.90 0.10
+arsenic 0.46 0.04
+
+Compare two people who live the same distance from the nearest well but whose arsenic levels differ, with one person having an arsenic level of 0.5 and the other person having a level of 1.0. You will estimate how much more likely this second person is to switch wells. Give an approximate estimate, standard error, 50% interval, and 95% interval, using two different methods:
+
+> (a) Use the divide-by-4 rule, based on the information from this regression output.
+
+```{r }
+# Given coefficients
+library("rstanarm")
+beta_arsenic <- 0.46
+max_slope <- beta_arsenic / 4
+cat("Max effect per 1-unit arsenic increase:", max_slope, "\n")
+delta_arsenic <- 1.0 - 0.5
+
+# Approximate difference
+approx_diff <- max_slope * delta_arsenic
+cat("Approximate difference in P(switch):", approx_diff, "\n")
+
+se_beta <- 0.04
+se_diff <- (se_beta / 4) * delta_arsenic
+cat("Standard error:", se_diff, "\n")
+lo50 <- approx_diff - 0.674 * se_diff
+hi50 <- approx_diff + 0.674 * se_diff
+cat("50% interval: [", lo50, ",", hi50, "]\n")
+lo95 <- approx_diff - 1.96 * se_diff
+hi95 <- approx_diff + 1.96 * se_diff
+cat("95% interval: [", lo95, ",", hi95, "]\n")
+```
+The arsenic coefficient is 0.46, so by the divide-by-4 rule the maximum effect of a 1-unit arsenic increase on switching probability is 0.46/4 = 0.115. Since the two people differ by only 0.5 arsenic units, the estimated difference in switching probability is 0.5 × 0.115 = 0.058, or about 5.8 percentage points. The standard error is 0.005, giving a 50% interval of [0.054, 0.061] and a 95% interval of [0.048, 0.067].
+
+
+> (b) Use predictive simulation from the fitted model in R, under the assumption that these two people each live 50 meters from the nearest safe well.
+
+```{r }
+data(wells, package = "rstanarm")
+
+wells$dist100 <- wells$dist / 100
+
+fit <- stan_glm(
+  switch ~ dist100 + arsenic,
+  family = binomial(link = "logit"),
+  data = wells,
+  refresh = 0
+)
+
+person1 <- data.frame(dist100 = 0.5, arsenic = 0.5)
+person2 <- data.frame(dist100 = 0.5, arsenic = 1.0)
+
+sims1 <- posterior_epred(fit, newdata = person1)
+sims2 <- posterior_epred(fit, newdata = person2)
+
+diff_sims <- sims2 - sims1
+mean(sims1)
+mean(sims2)
+mean(diff_sims)
+sd(diff_sims)
+quantile(diff_sims, c(0.25, 0.75))
+quantile(diff_sims, c(0.025, 0.975))
+```
+Using predictive simulation with both people living 50 meters from the nearest safe well, the person with arsenic = 1.0 has an estimated switching probability that is 0.058 (5.76 percentage points) higher than the person with arsenic = 0.5. The standard error is 0.0051, the 50% interval is [0.054, 0.061], and the 95% interval is [0.048, 0.067].
+
+The two methods give nearly the same result because, at distance 50 meters and arsenic levels 0.5 to 1.0, the predicted switching probabilities are around 0.45 to 0.50. Since these probabilities are close to 0.5, the logistic curve is near its steepest point, where the divide-by-4 approximation β/4 works very well.
+
+---
+
+# 13.11 Building a logistic regression model: 
+The folder Rodents contains data on rodents in a sample of New York City apartments.
+
+> (a) Build a logistic regression model to predict the presence of rodents (the variable rodent2 in the dataset) given indicators for the ethnic groups (race). Combine categories as appropriate. Discuss the estimated coefficients in the model.
+
+```{r }
+
+rodents <- read.csv("https://raw.githubusercontent.com/avehtari/ROS-Examples/master/Rodents/apt_all.dat", 
+                    sep = " ")
+rodents %>%
+  group_by(race) %>%
+  summarise(
+    n           = n(),
+    pct_rodents = round(mean(rodent2, na.rm=TRUE), 3)
+  )
+
+# 1 = White, 2 = Black, 3 = Puerto Rican, 4 = Other Hispanic
+# 5 = Asian, 6 = Amer. Indian, 7 = Two or more races
+# 6 and 7 as "other" 
+
+rodents <- rodents %>%
+  mutate(race_group = case_when(
+    race == 1 ~ "white",
+    race == 2 ~ "black",
+    race == 3 ~ "puerto_rican",
+    race == 4 ~ "other_hispanic",
+    race == 5 ~ "asian",
+    race %in% c(6, 7) ~ "other",
+    TRUE ~ NA_character_
+  ),
+  race_group = factor(race_group, levels = c("white", "black", 
+                      "puerto_rican", "other_hispanic", "asian", "other"))
+  )
+
+fit_a <- stan_glm(rodent2 ~ race_group,
+                  family = binomial(link = "logit"),
+                  data   = rodents,
+                  refresh = 0)
+
+print(fit_a)
+```
+White residents are the reference group. A positive coefficient means that group has higher odds of rodent presence compared to white residents. For example, race_groupasian = 0.8, then asian residents have exp(0.8) ≈ 2.2 times the odds of having rodents compared to white residents. Use divide-by-4 for a quick probability interpretation: 0.8/4 = 0.20, so about 20 percentage points most.
+
+
+> (b) Add to your model some other potentially relevant predictors describing the apartment, building, and community district. Build your model using the general principles explained in Section 12.6. Discuss the coefficients for the ethnicity indicators in your model.
+
+```{r }
+
+library(rstanarm)
+library(tidyverse)
+# unitflr2: floor of apartment
+# numunits: number of units in building
+# old: building age indicator
+# poverty: community poverty rate
+# dilap: building is dilapidated (1/0)
+
+colSums(is.na(rodents[, c("rodent2", "race_group", "unitflr2",
+                           "numunits", "old", "poverty", 
+                           "dilap", "stories")]))
+
+rodents %>%
+  group_by(race_group) %>%
+  summarise(
+    n           = n(),
+    pct_rodents = round(mean(rodent2, na.rm = TRUE), 3)
+  )
+
+fit_1 <- stan_glm(rodent2 ~ race_group, 
+                  family = binomial, data = rodents, refresh = 0)
+print(fit_1)
+fit_2 <- stan_glm(rodent2 ~ race_group + unitflr2 + numunits,
+                  family = binomial, data = rodents, refresh = 0)
+print(fit_2)
+fit_3 <- stan_glm(rodent2 ~ race_group + unitflr2 + numunits + 
+                             old + dilap,
+                  family = binomial, data = rodents, refresh = 0)
+
+print(fit_3)
+fit_4 <- stan_glm(rodent2 ~ race_group + unitflr2 + numunits +
+                             old + dilap +  poverty,
+                  family = binomial, data = rodents, refresh = 0)
+
+print(fit_4)
+data.frame(
+  predictor = names(coef(fit_1)),
+  model_1   = round(coef(fit_1), 3),
+  model_4   = round(coef(fit_4)[names(coef(fit_1))], 3)  
+)
+```
+
+After adding building age (old), number of units (numunits), floor (unitflr2), poverty rate (poverty), dilapidation (dilap), the race coefficients decrease only slightly (except for race_groupasian the coef increased a little bit). For example, the Puerto Rican coefficient drops from 1.614	 to 1.418	, and other Hispanic from 1.726	 to 1.484	. However, the coefficients remain large and do not come close to zero. This means that building and neighborhood characteristics explain only a small part of the racial disparity in rodent presence. Most of the gap persists even after accounting for the fact that minority groups may live in older, more dilapidated, or higher-poverty buildings. The remaining differences likely reflect other unmeasured factors.
+
+
+
+---
